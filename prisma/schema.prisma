@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("APP_DATABASE_URL")
+}
+
+model Usuario {
+  id         String         @id @default(uuid())
+  tipo       String
+  cpf        String?
+  cns        String?
+  senhaHash  String?        @map("senha_hash")
+  status     String
+  gestante   Gestante?
+  papeis     UsuarioPapel[]
+  sessoes    Sessao[]
+
+  @@map("usuario")
+}
+
+model Pessoa {
+  id        String     @id @default(uuid())
+  nome      String     @map("nome_completo")
+  gestante  Gestante?
+  enderecos Endereco[]
+
+  @@map("pessoa")
+}
+
+model Gestante {
+  id             String   @id @default(uuid())
+  usuarioId      String   @unique @map("usuario_id")
+  pessoaId       String   @unique @map("pessoa_id")
+  origemCadastro String   @map("origem_cadastro")
+  status         String
+  usuario        Usuario  @relation(fields: [usuarioId], references: [id])
+  pessoa         Pessoa   @relation(fields: [pessoaId], references: [id])
+  vinculo        GestanteVinculo?
+  escolhas       GestanteUnidadeEscolha[]
+
+  @@map("gestante")
+}
+
+model UsuarioPapel {
+  id         String  @id @default(uuid())
+  usuarioId  String  @map("usuario_id")
+  papel      String
+  ubsId      String? @map("ubs_id")
+  distritoId String? @map("distrito_id")
+  ativo      Boolean
+  usuario    Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("usuario_papel")
+}
+
+model Ubs {
+  id       String @id @default(uuid())
+  codigo   String
+  nome     String
+  cnes     String?
+  tipo     String
+
+  @@map("ubs")
+}
+
+model Sessao {
+  id         String   @id @default(uuid())
+  usuarioId  String   @map("usuario_id")
+  tokenHash  String   @unique @map("token_hash")
+  refreshHash String? @map("refresh_hash")
+  origem     String
+  expiracao  DateTime
+  revogadaEm DateTime? @map("revogada_em")
+  usuario    Usuario  @relation(fields: [usuarioId], references: [id])
+
+  @@map("sessao")
+}
+
+model GestanteVinculo {
+  gestanteId String @id @map("gestante_id")
+  ubsId      String @map("ubs_id")
+  gestante   Gestante @relation(fields: [gestanteId], references: [id])
+
+  @@map("gestante_vinculo")
+}
+
+model GestanteUnidadeEscolha {
+  id                     String   @id @default(uuid())
+  gestanteId             String   @map("gestante_id")
+  ubsId                  String?  @map("ubs_id")
+  unidadeEscolhidaNome   String   @map("unidade_escolhida_nome")
+  unidadeEscolhidaOrigem String   @map("unidade_escolhida_origem")
+  criadoEm               DateTime @default(now()) @map("criado_em")
+  gestante               Gestante @relation(fields: [gestanteId], references: [id])
+
+  @@map("gestante_unidade_escolha")
+}
+
+model GestanteEsqueceuSenhaTentativas {
+  cpfCns            String   @id @map("cpf_cns")
+  tentativas        Int
+  bloqueadoAte      DateTime? @map("bloqueado_ate")
+  ultimoDesafioHash String?  @map("ultimo_desafio_hash")
+  atualizadoEm      DateTime @default(now()) @map("atualizado_em")
+
+  @@map("gestante_esqueceu_senha_tentativas")
+}
+
+model Endereco {
+  id                  String  @id @default(uuid())
+  pessoaId            String  @map("pessoa_id")
+  cep                 String?
+  logradouro          String?
+  numero              String?
+  bairro              String?
+  distritoSanitarioId String? @map("distrito_sanitario_id")
+  pessoa              Pessoa  @relation(fields: [pessoaId], references: [id])
+
+  @@map("endereco")
+}
