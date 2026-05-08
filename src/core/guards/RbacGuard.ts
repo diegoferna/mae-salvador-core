@@ -23,7 +23,7 @@ export class RbacGuard implements CanActivate {
       WHERE up.usuario_id = ${gql.auth.sub}::uuid
     `;
 
-    const possuiEscopoInvalido = papeis.some((papel) => {
+    const possuiEscopoInvalido = papeis.some((papel: { papel: string; escopo: string }) => {
       if (papel.papel === "gerente_unidade") return !papel.escopo?.trim();
       if (papel.papel === "gerente_distrito") return !papel.escopo?.trim();
       return false;

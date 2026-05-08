@@ -70,7 +70,7 @@ export class GestanteService {
         identidadeGenero: gestante.pessoa.identidadeGenero ?? undefined,
         orientacaoSexual: gestante.pessoa.orientacaoSexual ?? undefined,
         possuiDeficiencia: gestante.possuiDeficiencia ?? undefined,
-        deficiencias: gestante.deficiencias.map((item) => item.tipo),
+        deficiencias: gestante.deficiencias.map((item: { tipo: string }) => item.tipo),
         dddCelularPrincipal: gestante.contato?.dddCelularPrincipal ?? undefined,
         celularPrincipal: gestante.contato?.celularPrincipal ?? undefined,
         celularPrincipalWhatsapp: gestante.contato?.celularPrincipalWhatsapp ?? undefined,
@@ -88,7 +88,7 @@ export class GestanteService {
         numero: endereco?.numero ?? undefined,
         complemento: endereco?.complemento ?? undefined,
         pontoReferencia: endereco?.pontoReferencia ?? undefined,
-        programasSociais: gestante.programasSociais.map((item) => item.programaCodigo),
+        programasSociais: gestante.programasSociais.map((item: { programaCodigo: string }) => item.programaCodigo),
         nis: gestante.pessoa.nis ?? undefined,
         planoSaudeParticular: gestante.planoSaudeParticular ?? undefined,
         alergiasConhecidas: gestante.alergiasConhecidas ?? undefined,
@@ -241,7 +241,7 @@ export class GestanteService {
         identidadeGenero: legacy.identidade_genero ?? undefined,
         orientacaoSexual: legacy.orientacao_sexual ?? undefined,
         possuiDeficiencia: legacy.possui_deficiencia ?? undefined,
-        deficiencias: legacy.deficiencia ? legacy.deficiencia.split(",").map((item) => item.trim()).filter(Boolean) : [],
+        deficiencias: legacy.deficiencia ? legacy.deficiencia.split(",").map((item: string) => item.trim()).filter(Boolean) : [],
         dddCelularPrincipal: legacy.ddd_celular_principal ?? undefined,
         celularPrincipal: legacy.celular_principal ?? legacy.telefone ?? undefined,
         celularPrincipalWhatsapp: legacy.celular_principal_whatsapp ?? undefined,
@@ -288,7 +288,7 @@ export class GestanteService {
 
   async atualizarCadastro(input: AtualizarCadastroGestanteInput) {
     this.validarAtualizacaoCadastral(input);
-    const gestanteRows = await this.prisma.$queryRawUnsafe<Array<{ id: string; usuario_id: string; pessoa_id: string }>>(
+    const gestanteRows = (await this.prisma.$queryRawUnsafe(
       `
       SELECT g.id::text, g.usuario_id::text, g.pessoa_id::text
       FROM gestante g
@@ -296,7 +296,7 @@ export class GestanteService {
       LIMIT 1
       `,
       input.cadastroId,
-    );
+    )) as Array<{ id: string; usuario_id: string; pessoa_id: string }>;
     const gestante = gestanteRows[0];
     if (!gestante) {
       throw new NotFoundException("gestante_not_found");
@@ -305,7 +305,7 @@ export class GestanteService {
     const cpf = input.cpf?.replace(/\D/g, "") || null;
     const cns = input.cns?.replace(/\D/g, "") || null;
     try {
-      await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx: any) => {
         await tx.usuario.update({
           where: { id: gestante.usuario_id },
           data: { cpf, cns },
@@ -427,7 +427,7 @@ export class GestanteService {
   }
 
   async avaliarUnidadePosAtualizacao(cadastroId: string) {
-    const rows = await this.prisma.$queryRawUnsafe<Array<{ id: string; ubs_id: string | null }>>(
+    const rows = (await this.prisma.$queryRawUnsafe(
       `
       SELECT g.id::text, gv.ubs_id::text
       FROM gestante g
@@ -436,7 +436,7 @@ export class GestanteService {
       LIMIT 1
       `,
       cadastroId,
-    );
+    )) as Array<{ id: string; ubs_id: string | null }>;
     const gestante = rows[0];
     if (!gestante) {
       throw new NotFoundException("gestante_not_found");
@@ -515,7 +515,7 @@ export class GestanteService {
     const origemCadastro = this.normalizarOrigemCadastro(input.origemCadastro);
 
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      return await this.prisma.$transaction(async (tx: any) => {
         const usuario = await tx.usuario.create({
           data: {
             tipo: "gestante",
@@ -555,7 +555,7 @@ export class GestanteService {
         throw error;
       }
 
-      return this.prisma.$transaction(async (tx) => {
+      return this.prisma.$transaction(async (tx: any) => {
         const usuarioId = randomUUID();
         const pessoaId = randomUUID();
         const gestanteId = randomUUID();
@@ -780,7 +780,7 @@ export class GestanteService {
     }
 
     const senhaHash = await bcrypt.hash(input.novaSenha, 10);
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.usuario.update({
         where: { id: sessao.usuarioId },
         data: { senhaHash },
@@ -792,15 +792,15 @@ export class GestanteService {
   }
 
   async escolherUnidade(input: EscolherUnidadeInput) {
-    const rows = await this.prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    const rows = (await this.prisma.$queryRawUnsafe(
       `SELECT g.id::text FROM gestante g WHERE g.id = $1::uuid LIMIT 1`,
       input.cadastroId,
-    );
+    )) as Array<{ id: string }>;
     const gestante = rows[0];
     if (!gestante) throw new NotFoundException("gestante_not_found");
 
     const unidade = await this.unidadeService.resolverPorNome(input.nomeUnidade);
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.gestanteVinculo.upsert({
         where: { gestanteId: gestante.id },
         update: { ubsId: unidade.id },
@@ -845,7 +845,7 @@ export class GestanteService {
 
     let cns = input.cns?.replace(/\D/g, "");
     if (!cns && input.cadastroId) {
-      const rows = await this.prisma.$queryRawUnsafe<Array<{ id: string; cns: string | null; cpf: string | null }>>(
+      const rows = (await this.prisma.$queryRawUnsafe(
         `
         SELECT g.id::text, u.cns::text, u.cpf::text
         FROM gestante g
@@ -854,7 +854,7 @@ export class GestanteService {
         LIMIT 1
         `,
         input.cadastroId,
-      );
+      )) as Array<{ id: string; cns: string | null; cpf: string | null }>;
       const gestante = rows[0];
       if (!gestante) throw new NotFoundException("gestante_not_found");
 
@@ -1050,7 +1050,7 @@ export class GestanteService {
       take: 5,
       select: { nome: true },
     });
-    return ubs.map((item) => ({
+    return ubs.map((item: { nome: string }) => ({
       nome: item.nome,
       distanciaKm: "",
       origem: "proxima",
@@ -1091,7 +1091,7 @@ export class GestanteService {
 
     const deficienciaTexto =
       input.possuiDeficiencia && input.deficienciaTipos?.length
-        ? input.deficienciaTipos.map((item) => item.trim()).filter(Boolean).join(", ")
+        ? input.deficienciaTipos.map((item: string) => item.trim()).filter(Boolean).join(", ")
         : null;
 
     const sexo = input.sexo?.trim().toUpperCase() || null;
@@ -1391,12 +1391,12 @@ export class GestanteService {
     const cns = input.cns?.replace(/\D/g, "") || null;
     const deficienciaTexto =
       input.possuiDeficiencia && input.deficiencias?.length
-        ? input.deficiencias.map((item) => item.trim()).filter(Boolean).join(", ")
+        ? input.deficiencias.map((item: string) => item.trim()).filter(Boolean).join(", ")
         : null;
     const identidadeCodigo = this.normalizeCatalogCode(input.identidadeGenero);
     const orientacaoCodigo = this.normalizeCatalogCode(input.orientacaoSexual);
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx: any) => {
       await tx.$executeRawUnsafe(
         `
         UPDATE usuario u
@@ -1445,10 +1445,10 @@ export class GestanteService {
         orientacaoCodigo,
       );
 
-      const enderecoRows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+      const enderecoRows = (await tx.$queryRawUnsafe(
         `SELECT e.id::text AS id FROM endereco e WHERE e.pessoa_id = $1::uuid ORDER BY e.atualizado_em DESC NULLS LAST, e.criado_em DESC NULLS LAST LIMIT 1`,
         ids.pessoaId,
-      );
+      )) as Array<{ id: string }>;
       const enderecoId = enderecoRows[0]?.id;
       if (enderecoId) {
         await tx.$executeRawUnsafe(
@@ -1519,16 +1519,16 @@ export class GestanteService {
             ? "sim"
             : "nao";
       const planoRows = planoSaudeCodigo
-        ? await tx.$queryRawUnsafe<Array<{ id: string }>>(
+        ? ((await tx.$queryRawUnsafe(
             `SELECT pso.id::text AS id FROM plano_saude_opcao pso WHERE pso.codigo = $1::text LIMIT 1`,
             planoSaudeCodigo,
-          )
+          )) as Array<{ id: string }>)
         : [];
       const planoId = planoRows[0]?.id ?? null;
-      const clinicoRows = await tx.$queryRawUnsafe<Array<{ gestante_id: string }>>(
+      const clinicoRows = (await tx.$queryRawUnsafe(
         `SELECT gc.gestante_id::text FROM gestante_clinico gc WHERE gc.gestante_id = $1::uuid LIMIT 1`,
         ids.gestanteId,
-      );
+      )) as Array<{ gestante_id: string }>;
       if (clinicoRows.length > 0) {
         await tx.$executeRawUnsafe(
           `
@@ -1774,13 +1774,13 @@ export class GestanteService {
   private async getTentativasRow(
     cpfCns: string,
   ): Promise<{ tentativas: number; bloqueadoAte: Date | null } | null> {
-    const rows = await this.prisma.$queryRawUnsafe<Array<{ tentativas: number; bloqueado_ate: Date | null }>>(
+    const rows = (await this.prisma.$queryRawUnsafe(
       `SELECT tentativas, bloqueado_ate
        FROM gestante_esqueceu_senha_tentativas
        WHERE cpf_cns = $1
        LIMIT 1`,
       cpfCns,
-    );
+    )) as Array<{ tentativas: number; bloqueado_ate: Date | null }>;
     const row = rows[0];
     if (!row) return null;
     return { tentativas: Number(row.tentativas ?? 0), bloqueadoAte: row.bloqueado_ate ?? null };
