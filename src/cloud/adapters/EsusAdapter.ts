@@ -233,15 +233,44 @@ export class EsusAdapter {
   async atualizarGpsPaciente(cns: string, lat: number, lon: number): Promise<void> {
     await this.withTimeout(async () => {
       const pool = this.getPool();
-      await pool.query(
+      const statements = [
+        `INSERT INTO apoio_paciente_gps (nu_cns, lat_paciente, lon_paciente, atualizado_em)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (nu_cns) DO UPDATE
+         SET lat_paciente = EXCLUDED.lat_paciente,
+             lon_paciente = EXCLUDED.lon_paciente,
+             atualizado_em = now()`,
         `INSERT INTO apoio_paciente_gps (nu_cns, latitude, longitude, atualizado_em)
          VALUES ($1, $2, $3, now())
          ON CONFLICT (nu_cns) DO UPDATE
          SET latitude = EXCLUDED.latitude,
              longitude = EXCLUDED.longitude,
              atualizado_em = now()`,
-        [cns, lat, lon],
-      );
+        `INSERT INTO tb_apoio_paciente_gps (nu_cns, lat_paciente, lon_paciente, atualizado_em)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (nu_cns) DO UPDATE
+         SET lat_paciente = EXCLUDED.lat_paciente,
+             lon_paciente = EXCLUDED.lon_paciente,
+             atualizado_em = now()`,
+        `INSERT INTO tb_apoio_paciente_gps (nu_cns, latitude, longitude, atualizado_em)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (nu_cns) DO UPDATE
+         SET latitude = EXCLUDED.latitude,
+             longitude = EXCLUDED.longitude,
+             atualizado_em = now()`,
+      ];
+
+      let lastError: unknown;
+      for (const sql of statements) {
+        try {
+          await pool.query(sql, [cns, lat, lon]);
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error("gps_upsert_failed");
     });
   }
 

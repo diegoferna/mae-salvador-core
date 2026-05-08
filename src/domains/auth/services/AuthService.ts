@@ -17,18 +17,30 @@ export class AuthService {
   ) {}
 
   async loginGestante(input: LoginGestanteInput) {
-    console.log("iniciando login gestante");
     if (!input.cpfCns || !input.senha) {
       throw new BadRequestException("cpf_cns_and_password_required");
     }
-    console.log("input", input);
     const documento = input.cpfCns.replace(/\D/g, "");
     const usuario = await this.prisma.usuario.findFirst({
       where: {
         tipo: "gestante",
         OR: [{ cpf: documento }, { cns: documento }],
       },
-      include: { gestante: { include: { pessoa: true } } },
+      select: {
+        id: true,
+        senhaHash: true,
+        status: true,
+        gestante: {
+          select: {
+            id: true,
+            pessoa: {
+              select: {
+                nome: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!usuario?.senhaHash || usuario.status !== "ativo") {
@@ -44,9 +56,13 @@ export class AuthService {
     }
 
     const token = await this.jwtService.sign(usuario.id, "gestante");
+    if (!usuario.gestante?.id) {
+      throw new UnauthorizedException("invalid_credentials");
+    }
     return {
       token,
       usuarioId: usuario.id,
+      cadastroId: usuario.gestante.id,
       nome: usuario.gestante?.pessoa?.nome ?? "",
     };
   }

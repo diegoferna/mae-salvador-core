@@ -1,16 +1,13 @@
 import { Field, ObjectType } from "@nestjs/graphql";
 
 @ObjectType()
-export class LoginGestantePayload {
-  @Field(() => String)
-  token!: string;
-
-  @Field(() => String)
-  usuarioId!: string;
-
-  @Field(() => String)
-  cadastroId!: string;
-
+export class UnidadePosAtualizacaoOpcaoObject {
   @Field(() => String)
   nome!: string;
+
+  @Field(() => String)
+  distanciaKm!: string;
+
+  @Field(() => String)
+  origem!: string;
 }

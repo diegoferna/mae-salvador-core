@@ -24,6 +24,16 @@ model Usuario {
 model Pessoa {
   id        String     @id @default(uuid())
   nome      String     @map("nome_completo")
+  nomeSocial String?   @map("nome_social")
+  nomeMae   String?    @map("nome_mae")
+  nomePai   String?    @map("nome_pai")
+  dataNascimento DateTime? @map("data_nascimento")
+  racaCor   String?    @map("raca_cor")
+  sexo      String?
+  identidadeGenero String? @map("identidade_genero")
+  orientacaoSexual String? @map("orientacao_sexual")
+  email     String?
+  nis       String?
   gestante  Gestante?
   enderecos Endereco[]
 
@@ -36,10 +46,19 @@ model Gestante {
   pessoaId       String   @unique @map("pessoa_id")
   origemCadastro String   @map("origem_cadastro")
   status         String
+  possuiDeficiencia Boolean? @map("possui_deficiencia")
+  planoSaudeParticular Boolean? @map("plano_saude_particular")
+  alergiasConhecidas Boolean? @map("alergias_conhecidas")
+  medicamentosEmUso Boolean? @map("medicamentos_em_uso")
+  doencasPreexistentes Boolean? @map("doencas_preexistentes")
+  cadastroAtualizadoEm DateTime? @map("cadastro_atualizado_em")
   usuario        Usuario  @relation(fields: [usuarioId], references: [id])
   pessoa         Pessoa   @relation(fields: [pessoaId], references: [id])
   vinculo        GestanteVinculo?
   escolhas       GestanteUnidadeEscolha[]
+  contato        GestanteContato?
+  deficiencias   GestanteDeficiencia[]
+  programasSociais GestanteProgramaSocial[]
 
   @@map("gestante")
 }
@@ -114,10 +133,51 @@ model Endereco {
   pessoaId            String  @map("pessoa_id")
   cep                 String?
   logradouro          String?
+  tipoLogradouro      String? @map("tipo_logradouro")
   numero              String?
+  complemento         String?
   bairro              String?
+  municipio           String?
+  pontoReferencia     String? @map("ponto_referencia")
   distritoSanitarioId String? @map("distrito_sanitario_id")
   pessoa              Pessoa  @relation(fields: [pessoaId], references: [id])
 
   @@map("endereco")
+}
+
+model GestanteContato {
+  id                       String   @id @default(uuid())
+  gestanteId               String   @unique @map("gestante_id")
+  dddCelularPrincipal      String?  @map("ddd_celular_principal")
+  celularPrincipal         String?  @map("celular_principal")
+  celularPrincipalWhatsapp Boolean? @map("celular_principal_whatsapp")
+  dddCelularAlternativo    String?  @map("ddd_celular_alternativo")
+  celularAlternativo       String?  @map("celular_alternativo")
+  celularAlternativoWhatsapp Boolean? @map("celular_alternativo_whatsapp")
+  dddResidencial           String?  @map("ddd_residencial")
+  telefoneResidencial      String?  @map("telefone_residencial")
+  gestante                 Gestante @relation(fields: [gestanteId], references: [id])
+
+  @@map("gestante_contato")
+}
+
+model GestanteDeficiencia {
+  id         String   @id @default(uuid())
+  gestanteId String   @map("gestante_id")
+  tipo       String
+  criadoEm   DateTime @default(now()) @map("criado_em")
+  gestante   Gestante @relation(fields: [gestanteId], references: [id])
+
+  @@map("gestante_deficiencia")
+}
+
+model GestanteProgramaSocial {
+  id            String   @id @default(uuid())
+  gestanteId    String   @map("gestante_id")
+  programaCodigo String  @map("programa_codigo")
+  programaNome  String   @map("programa_nome")
+  criadoEm      DateTime @default(now()) @map("criado_em")
+  gestante      Gestante @relation(fields: [gestanteId], references: [id])
+
+  @@map("gestante_programa_social")
 }

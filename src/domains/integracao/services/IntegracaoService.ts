@@ -71,7 +71,12 @@ export class IntegracaoService {
 
   async confirmarOrientacao(cns: string, lat?: number, lon?: number): Promise<string> {
     if (typeof lat === "number" && typeof lon === "number") {
-      await this.esusAdapter.atualizarGpsPaciente(cns, lat, lon);
+      try {
+        await this.esusAdapter.atualizarGpsPaciente(cns, lat, lon);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Falha ao atualizar GPS do paciente no e-SUS: ${message}`);
+      }
     }
 
     const orientacao = await this.esusAdapter.orientarMaeSalvador(cns, lat, lon);

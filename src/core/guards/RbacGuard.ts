@@ -15,14 +15,17 @@ export class RbacGuard implements CanActivate {
       throw new ForbiddenException("missing_user_context");
     }
 
-    const papeis = await this.prisma.usuarioPapel.findMany({
-      where: { usuarioId: gql.auth.sub, ativo: true },
-      select: { papel: true, ubsId: true, distritoId: true },
-    });
+    const papeis = await this.prisma.$queryRaw<Array<{ papel: string; escopo: string }>>`
+      SELECT
+        up.papel::text AS papel,
+        up.escopo::text AS escopo
+      FROM usuario_papel up
+      WHERE up.usuario_id = ${gql.auth.sub}::uuid
+    `;
 
     const possuiEscopoInvalido = papeis.some((papel) => {
-      if (papel.papel === "gerente_unidade") return !papel.ubsId;
-      if (papel.papel === "gerente_distrito") return !papel.distritoId;
+      if (papel.papel === "gerente_unidade") return !papel.escopo?.trim();
+      if (papel.papel === "gerente_distrito") return !papel.escopo?.trim();
       return false;
     });
 

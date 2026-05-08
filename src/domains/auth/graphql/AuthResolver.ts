@@ -12,7 +12,6 @@ export class AuthResolver {
     @Args("input", { type: () => LoginGestanteInput })
     input: LoginGestanteInput,
   ): Promise<LoginGestantePayload> {
-    console.log("loginGestante", input);
     return this.authService.loginGestante(input);
   }
 }
