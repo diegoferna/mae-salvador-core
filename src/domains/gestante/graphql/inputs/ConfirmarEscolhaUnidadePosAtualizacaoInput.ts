@@ -1,5 +1,5 @@
 import { Field, InputType } from "@nestjs/graphql";
-import { IsString } from "class-validator";
+import { IsOptional, IsString } from "class-validator";
 
 @InputType()
 export class ConfirmarEscolhaUnidadePosAtualizacaoInput {
@@ -10,6 +10,11 @@ export class ConfirmarEscolhaUnidadePosAtualizacaoInput {
   @Field(() => String)
   @IsString()
   nomeUnidade!: string;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  cnes?: string;
 
   @Field(() => String)
   @IsString()

@@ -11,7 +11,7 @@ import { RedefinirSenhaGestanteInput } from "./inputs/RedefinirSenhaGestanteInpu
 import { EscolherUnidadeInput } from "./inputs/EscolherUnidadeInput";
 import { EscolhaUnidadePayload } from "./objects/EscolhaUnidadePayload";
 import { ConfirmarOrientacaoInput } from "./inputs/ConfirmarOrientacaoInput";
-import { ConfirmacaoOrientacaoPayload } from "./objects/ConfirmacaoOrientacaoPayload";
+import { OrientacaoMaeSalvadorPayload } from "./objects/OrientacaoMaeSalvadorPayload";
 import { ProgramaSocialObject } from "./objects/ProgramaSocialObject";
 import { BuscarPerguntaRecuperacaoSenhaPayload } from "./objects/BuscarPerguntaRecuperacaoSenhaPayload";
 import { VerificarRespostaRecuperacaoSenhaInput } from "./inputs/VerificarRespostaRecuperacaoSenhaInput";
@@ -79,10 +79,10 @@ export class GestanteResolver {
     return this.gestanteService.escolherUnidade(input);
   }
 
-  @Mutation(() => ConfirmacaoOrientacaoPayload)
+  @Mutation(() => OrientacaoMaeSalvadorPayload)
   confirmarOrientacaoGestante(
     @Args("input", { type: () => ConfirmarOrientacaoInput }) input: ConfirmarOrientacaoInput,
-  ): Promise<ConfirmacaoOrientacaoPayload> {
+  ): Promise<OrientacaoMaeSalvadorPayload> {
     return this.gestanteService.confirmarOrientacao(input);
   }
 

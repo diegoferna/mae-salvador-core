@@ -17,4 +17,16 @@ export class UnidadeService {
 
     return ubs;
   }
+
+  async resolverPorCnesOuNome(input: { cnes?: string | null; nome: string }) {
+    const cnes = input.cnes?.trim();
+    if (cnes) {
+      const porCnes = await this.prisma.ubs.findFirst({
+        where: { cnes },
+        select: { id: true, nome: true, codigo: true },
+      });
+      if (porCnes) return porCnes;
+    }
+    return this.resolverPorNome(input.nome);
+  }
 }

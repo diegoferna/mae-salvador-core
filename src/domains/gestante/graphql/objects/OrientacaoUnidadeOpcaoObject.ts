@@ -1,13 +1,13 @@
 import { Field, ObjectType } from "@nestjs/graphql";
 
 @ObjectType()
-export class UnidadePosAtualizacaoOpcaoObject {
+export class OrientacaoUnidadeOpcaoObject {
   @Field(() => String)
   nome!: string;
 
   @Field(() => String, { nullable: true })
   cnes?: string;
 
-  @Field(() => String)
-  origem!: string;
+  @Field(() => String, { nullable: true })
+  distrito?: string;
 }

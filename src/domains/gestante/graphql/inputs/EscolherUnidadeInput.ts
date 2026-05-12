@@ -1,5 +1,5 @@
 import { Field, InputType } from "@nestjs/graphql";
-import { IsNotEmpty, IsString } from "class-validator";
+import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 @InputType()
 export class EscolherUnidadeInput {
@@ -12,6 +12,11 @@ export class EscolherUnidadeInput {
   @IsString()
   @IsNotEmpty()
   nomeUnidade!: string;
+
+  @Field(() => String, { nullable: true })
+  @IsOptional()
+  @IsString()
+  cnes?: string;
 
   @Field(() => String)
   @IsString()

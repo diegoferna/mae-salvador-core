@@ -1,7 +1,14 @@
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { EsusAdapter } from "../../../cloud/adapters/EsusAdapter";
-import { NominatimAdapter } from "../../../cloud/adapters/NominatimAdapter";
+import { OrientacaoMaeSalvadorRaw } from "../../../cloud/adapters/EsusAdapter.types";
 import { SoapCnsAdapter } from "../../../cloud/adapters/SoapCnsAdapter";
+import { OrientacaoMaeSalvadorPayload } from "../../gestante/graphql/objects/OrientacaoMaeSalvadorPayload";
+
+const SITUACOES_QUE_EXIGEM_ESCOLHA = new Set([
+  "CDI_OUTRO_DISTRITO",
+  "SEM_CDI",
+  "FORA_SALVADOR",
+]);
 
 @Injectable()
 export class IntegracaoService {
@@ -10,7 +17,6 @@ export class IntegracaoService {
   constructor(
     private readonly esusAdapter: EsusAdapter,
     private readonly soapCnsAdapter: SoapCnsAdapter,
-    private readonly nominatimAdapter: NominatimAdapter,
   ) {}
 
   async buscarCep(cep: string) {
@@ -46,6 +52,106 @@ export class IntegracaoService {
     return { sucesso: false, fontesIndisponiveis };
   }
 
+  async orientarMaeSalvador(
+    cns: string,
+    fallback?: { bairro?: string | null; municipio?: string | null },
+  ): Promise<OrientacaoMaeSalvadorPayload> {
+    let base: OrientacaoMaeSalvadorPayload;
+    try {
+      const raw = await this.esusAdapter.orientarMaeSalvador(cns);
+      base = raw ? this.mapearOrientacao(raw) : this.payloadIndeterminado();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Falha ao orientar Mae Salvador: ${message}`);
+      base = this.payloadIndeterminado();
+    }
+    return this.aplicarFallbackPorBairro(base, fallback);
+  }
+
+  /**
+   * Quando a fn_orientacao_mae_salvador_v2 nao consegue determinar o distrito
+   * (paciente novo, sem cadastro em tb_cidadao/e-SUS), usamos o bairro/municipio
+   * informados pelo proprio cadastro (app DB) para listar unidades elegiveis.
+   * Mantemos o resto do payload (situacao clinica, unidade de acompanhamento etc).
+   */
+  private async aplicarFallbackPorBairro(
+    base: OrientacaoMaeSalvadorPayload,
+    fallback?: { bairro?: string | null; municipio?: string | null },
+  ): Promise<OrientacaoMaeSalvadorPayload> {
+    if (base.unidadesElegiveis.length > 0) return base;
+    const bairro = (fallback?.bairro ?? "").trim();
+    if (!bairro) return base;
+
+    const municipioNorm = (fallback?.municipio ?? "")
+      .toString()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+    const isSalvador = municipioNorm === "salvador" || municipioNorm.includes("salvador");
+
+    try {
+      const result = await this.esusAdapter.listarUnidadesPorBairro(bairro, isSalvador);
+      if (result.unidades.length === 0) {
+        return base;
+      }
+      const unidadesElegiveis = result.unidades.map((u) => ({
+        nome: u.nome,
+        ...(u.cnes ? { cnes: u.cnes } : {}),
+        ...(u.distrito ? { distrito: u.distrito } : {}),
+      }));
+      const situacaoBase = base.situacaoFinal;
+      let situacaoFinal = situacaoBase;
+      if (situacaoBase === "INDETERMINADO" || situacaoBase === "SEM_CDI") {
+        situacaoFinal = isSalvador ? "SEM_CDI" : "FORA_SALVADOR";
+      }
+      return {
+        ...base,
+        situacaoFinal,
+        unidadesElegiveis,
+        ...(base.distritoPaciente ? {} : result.distrito ? { distritoPaciente: result.distrito } : {}),
+        ...(base.bairroPaciente ? {} : { bairroPaciente: bairro }),
+        ...(base.coIbgeMunicipio ? {} : isSalvador ? { coIbgeMunicipio: "2927408" } : {}),
+        exigeEscolha: SITUACOES_QUE_EXIGEM_ESCOLHA.has(situacaoFinal),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Falha ao aplicar fallback de bairro: ${message}`);
+      return base;
+    }
+  }
+
+  private mapearOrientacao(raw: OrientacaoMaeSalvadorRaw): OrientacaoMaeSalvadorPayload {
+    const situacaoFinal = (raw.situacao_final ?? "INDETERMINADO").toString().trim() || "INDETERMINADO";
+    const unidadesElegiveis = (raw.unidades_elegiveis ?? []).map((item) => ({
+      nome: item.nome,
+      ...(item.cnes ? { cnes: item.cnes } : {}),
+      ...(item.distrito ? { distrito: item.distrito } : {}),
+    }));
+    return {
+      situacaoFinal,
+      ...(raw.unidade_acompanhamento_nome ? { unidadeAcompanhamentoNome: raw.unidade_acompanhamento_nome } : {}),
+      ...(raw.unidade_acompanhamento_cnes ? { unidadeAcompanhamentoCnes: raw.unidade_acompanhamento_cnes } : {}),
+      ...(raw.unidade_cadastro_nome ? { unidadeCadastroNome: raw.unidade_cadastro_nome } : {}),
+      ...(raw.unidade_cadastro_cnes ? { unidadeCadastroCnes: raw.unidade_cadastro_cnes } : {}),
+      ...(raw.distrito_paciente ? { distritoPaciente: raw.distrito_paciente } : {}),
+      ...(raw.no_bairro_paciente ? { bairroPaciente: raw.no_bairro_paciente } : {}),
+      ...(raw.co_ibge_municipio ? { coIbgeMunicipio: raw.co_ibge_municipio } : {}),
+      unidadesElegiveis,
+      mensagem: raw.mensagem?.trim() || "Orientacao registrada.",
+      exigeEscolha: SITUACOES_QUE_EXIGEM_ESCOLHA.has(situacaoFinal),
+    };
+  }
+
+  private payloadIndeterminado(): OrientacaoMaeSalvadorPayload {
+    return {
+      situacaoFinal: "INDETERMINADO",
+      unidadesElegiveis: [],
+      mensagem: "Nao foi possivel determinar uma unidade automaticamente.",
+      exigeEscolha: false,
+    };
+  }
+
   async buscarCnsPorDados(input: { nome: string; nomeMae?: string; dataNascimento?: string }) {
     const fontesIndisponiveis: string[] = [];
     try {
@@ -63,24 +169,6 @@ export class IntegracaoService {
     }
 
     return { sucesso: false, fontesIndisponiveis };
-  }
-
-  geocodificarEndereco(endereco: string): Promise<{ lat: number; lon: number } | null> {
-    return this.nominatimAdapter.geocodificar(endereco);
-  }
-
-  async confirmarOrientacao(cns: string, lat?: number, lon?: number): Promise<string> {
-    if (typeof lat === "number" && typeof lon === "number") {
-      try {
-        await this.esusAdapter.atualizarGpsPaciente(cns, lat, lon);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn(`Falha ao atualizar GPS do paciente no e-SUS: ${message}`);
-      }
-    }
-
-    const orientacao = await this.esusAdapter.orientarMaeSalvador(cns, lat, lon);
-    return orientacao ?? "Orientacao registrada com sucesso.";
   }
 
   private async buscarCnsSoapDireto(documento: string): Promise<{

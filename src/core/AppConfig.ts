@@ -44,10 +44,6 @@ export class AppConfig {
     return Boolean(user && password);
   }
 
-  get nominatimUserAgent(): string {
-    return this.configService.get<string>("NOMINATIM_USER_AGENT")?.trim() || "mae-salvador-core/1.0";
-  }
-
   private must(key: string): string {
     const value = this.configService.get<string>(key);
     if (!value) {

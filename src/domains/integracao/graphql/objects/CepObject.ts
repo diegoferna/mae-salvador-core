@@ -13,4 +13,10 @@ export class CepObject {
 
   @Field(() => String, { nullable: true })
   tipoLogradouro?: string;
+
+  @Field(() => String, { nullable: true })
+  localidade?: string;
+
+  @Field(() => String, { nullable: true })
+  uf?: string;
 }

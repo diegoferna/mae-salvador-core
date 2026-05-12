@@ -2,6 +2,10 @@ import { Inject, Injectable, Logger, ServiceUnavailableException } from "@nestjs
 import { Pool } from "pg";
 import { AppConfig } from "../../core/AppConfig";
 import { resolveTipoLogradouroParaCadastro } from "../../shared/logradouro/TipoLogradouroMapper";
+import {
+  OrientacaoMaeSalvadorRaw,
+  OrientacaoUnidadeRaw,
+} from "./EsusAdapter.types";
 
 type CidadaoLookup = {
   cns: string;
@@ -230,67 +234,140 @@ export class EsusAdapter {
     });
   }
 
-  async atualizarGpsPaciente(cns: string, lat: number, lon: number): Promise<void> {
-    await this.withTimeout(async () => {
+  async orientarMaeSalvador(cns: string): Promise<OrientacaoMaeSalvadorRaw | null> {
+    return this.withTimeout(async () => {
       const pool = this.getPool();
-      const statements = [
-        `INSERT INTO apoio_paciente_gps (nu_cns, lat_paciente, lon_paciente, atualizado_em)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (nu_cns) DO UPDATE
-         SET lat_paciente = EXCLUDED.lat_paciente,
-             lon_paciente = EXCLUDED.lon_paciente,
-             atualizado_em = now()`,
-        `INSERT INTO apoio_paciente_gps (nu_cns, latitude, longitude, atualizado_em)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (nu_cns) DO UPDATE
-         SET latitude = EXCLUDED.latitude,
-             longitude = EXCLUDED.longitude,
-             atualizado_em = now()`,
-        `INSERT INTO tb_apoio_paciente_gps (nu_cns, lat_paciente, lon_paciente, atualizado_em)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (nu_cns) DO UPDATE
-         SET lat_paciente = EXCLUDED.lat_paciente,
-             lon_paciente = EXCLUDED.lon_paciente,
-             atualizado_em = now()`,
-        `INSERT INTO tb_apoio_paciente_gps (nu_cns, latitude, longitude, atualizado_em)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (nu_cns) DO UPDATE
-         SET latitude = EXCLUDED.latitude,
-             longitude = EXCLUDED.longitude,
-             atualizado_em = now()`,
-      ];
-
-      let lastError: unknown;
-      for (const sql of statements) {
-        try {
-          await pool.query(sql, [cns, lat, lon]);
-          return;
-        } catch (error) {
-          lastError = error;
-        }
-      }
-
-      throw lastError instanceof Error ? lastError : new Error("gps_upsert_failed");
+      const result = await pool.query<{
+        situacao_final: string | null;
+        unidade_acompanhamento_nome: string | null;
+        unidade_acompanhamento_cnes: string | null;
+        unidade_cadastro_nome: string | null;
+        unidade_cadastro_cnes: string | null;
+        distrito_paciente: string | null;
+        no_bairro_paciente: string | null;
+        co_ibge_municipio: string | null;
+        unidades_elegiveis: unknown;
+        mensagem: string | null;
+      }>(
+        `SELECT situacao_final,
+                unidade_acompanhamento_nome,
+                unidade_acompanhamento_cnes,
+                unidade_cadastro_nome,
+                unidade_cadastro_cnes,
+                distrito_paciente,
+                no_bairro_paciente,
+                co_ibge_municipio,
+                unidades_elegiveis,
+                mensagem
+           FROM fn_orientacao_mae_salvador_v2($1)`,
+        [cns],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        situacao_final: (row.situacao_final ?? "INDETERMINADO").toString(),
+        unidade_acompanhamento_nome: row.unidade_acompanhamento_nome,
+        unidade_acompanhamento_cnes: row.unidade_acompanhamento_cnes,
+        unidade_cadastro_nome: row.unidade_cadastro_nome,
+        unidade_cadastro_cnes: row.unidade_cadastro_cnes,
+        distrito_paciente: row.distrito_paciente,
+        no_bairro_paciente: row.no_bairro_paciente,
+        co_ibge_municipio: row.co_ibge_municipio,
+        unidades_elegiveis: this.parseUnidadesElegiveis(row.unidades_elegiveis),
+        mensagem: row.mensagem,
+      };
     });
   }
 
-  async orientarMaeSalvador(cns: string, lat?: number, lon?: number): Promise<string | null> {
+  /**
+   * Lista unidades elegiveis a partir do bairro informado pelo cadastro (app DB).
+   * Usado como fallback quando o paciente ainda nao tem cadastro em tb_cidadao/e-SUS
+   * e a fn_orientacao_mae_salvador_v2 retorna sem unidades.
+   *
+   * - isSalvador=true  -> usa tb_bairro_x_distrito para resolver o distrito
+   *                       e filtra tb_apoio_unidades_bi por esse distrito.
+   * - isSalvador=false -> retorna apenas UBSs de demanda livre (no_unidade_saude ILIKE 'UBS%').
+   */
+  async listarUnidadesPorBairro(
+    bairro: string,
+    isSalvador: boolean,
+  ): Promise<{ distrito: string | null; unidades: OrientacaoUnidadeRaw[] }> {
+    if (!this.appConfig.esusDatabaseUrlOptional) {
+      return { distrito: null, unidades: [] };
+    }
+    const bairroNorm = (bairro ?? "").trim();
+    if (!bairroNorm) {
+      return { distrito: null, unidades: [] };
+    }
     return this.withTimeout(async () => {
       const pool = this.getPool();
-      if (typeof lat === "number" && typeof lon === "number") {
-        const result = await pool.query<{ fn_orientacao_mae_salvador: string | null }>(
-          "SELECT fn_orientacao_mae_salvador($1, $2, $3)",
-          [cns, lat, lon],
-        );
-        return result.rows[0]?.fn_orientacao_mae_salvador ?? null;
-      }
-
-      const fallback = await pool.query<{ fn_orientacao_mae_salvador: string | null }>(
-        "SELECT fn_orientacao_mae_salvador($1)",
-        [cns],
+      const result = await pool.query<{
+        no_unidade: string | null;
+        no_cnes: string | null;
+        no_distrito_sanitario: string | null;
+        distrito_paciente: string | null;
+      }>(
+        `WITH paciente_distrito AS (
+           SELECT bd.no_distrito_sanitario::text AS distrito
+             FROM tb_bairro_x_distrito bd
+            WHERE upper(trim(bd.no_bairro)) = upper(trim($1::text))
+            LIMIT 1
+         )
+         SELECT
+           u.no_unidade_saude::text       AS no_unidade,
+           u.nu_cnes::text                AS no_cnes,
+           u.no_distrito_sanitario::text  AS no_distrito_sanitario,
+           (SELECT distrito FROM paciente_distrito) AS distrito_paciente
+         FROM tb_apoio_unidades_bi u
+         WHERE
+           ( $2::boolean = false AND u.no_unidade_saude ILIKE 'UBS%' )
+           OR
+           ( $2::boolean = true
+             AND (SELECT distrito FROM paciente_distrito) IS NOT NULL
+             AND u.no_distrito_sanitario = (SELECT distrito FROM paciente_distrito) )
+         ORDER BY u.no_unidade_saude ASC`,
+        [bairroNorm, isSalvador],
       );
-      return fallback.rows[0]?.fn_orientacao_mae_salvador ?? null;
+      const distrito = result.rows[0]?.distrito_paciente ?? null;
+      const unidades: OrientacaoUnidadeRaw[] = result.rows
+        .filter((row) => Boolean(row.no_unidade))
+        .map((row) => ({
+          nome: row.no_unidade as string,
+          cnes: row.no_cnes ?? null,
+          distrito: row.no_distrito_sanitario ?? null,
+        }));
+      return { distrito, unidades };
     });
+  }
+
+  private parseUnidadesElegiveis(value: unknown): OrientacaoUnidadeRaw[] {
+    if (!value) return [];
+    let array: unknown[] = [];
+    if (Array.isArray(value)) {
+      array = value;
+    } else if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) array = parsed;
+      } catch {
+        return [];
+      }
+    }
+    const out: OrientacaoUnidadeRaw[] = [];
+    for (const item of array) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+      const nome = typeof obj.nome === "string" ? obj.nome.trim() : "";
+      if (!nome) continue;
+      const cnesRaw = obj.cnes;
+      const distritoRaw = obj.distrito;
+      out.push({
+        nome,
+        cnes: typeof cnesRaw === "string" && cnesRaw.trim() ? cnesRaw.trim() : null,
+        distrito: typeof distritoRaw === "string" && distritoRaw.trim() ? distritoRaw.trim() : null,
+      });
+    }
+    return out;
   }
 
   private async withTimeout<T>(operation: () => Promise<T>, timeoutMs = 10000): Promise<T> {

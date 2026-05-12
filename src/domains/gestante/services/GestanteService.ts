@@ -14,7 +14,10 @@ import { RedefinirSenhaGestanteInput } from "../graphql/inputs/RedefinirSenhaGes
 import { SolicitarRecuperacaoSenhaInput } from "../graphql/inputs/SolicitarRecuperacaoSenhaInput";
 import { VerificarRespostaRecuperacaoSenhaInput } from "../graphql/inputs/VerificarRespostaRecuperacaoSenhaInput";
 import { AtualizacaoCadastralGestanteObject } from "../graphql/objects/AtualizacaoCadastralGestanteObject";
+import { OrientacaoMaeSalvadorPayload } from "../graphql/objects/OrientacaoMaeSalvadorPayload";
 import { ProgramaSocialObject } from "../graphql/objects/ProgramaSocialObject";
+
+type OpcaoEscolhaUnidade = { nome: string; cnes?: string; origem: string };
 
 type OpcaoPergunta = { id: string; texto: string };
 type Challenge = {
@@ -441,39 +444,59 @@ export class GestanteService {
     if (!gestante) {
       throw new NotFoundException("gestante_not_found");
     }
-    let opcoesProximas: Array<{ nome: string; distanciaKm: string; origem: "cdi" | "proxima" }> = [];
-    try {
-      const mensagemOrientacao = await this.confirmarOrientacao({ cadastroId });
-      opcoesProximas = this.parseOpcoesEscolhaDaMensagem(mensagemOrientacao.mensagem);
-    } catch {
-      opcoesProximas = await this.listarOpcoesUnidadeFallback();
-    }
 
-    if (opcoesProximas.length === 0) {
-      opcoesProximas = await this.listarOpcoesUnidadeFallback();
-    }
+    const orientacao = await this.confirmarOrientacao({ cadastroId });
+    const opcoes: OpcaoEscolhaUnidade[] = orientacao.unidadesElegiveis.map((unidade) => ({
+      nome: unidade.nome,
+      ...(unidade.cnes ? { cnes: unidade.cnes } : {}),
+      origem: "distrito",
+    }));
 
+    let unidadeAtualNome: string | undefined;
+    let unidadeAtualCnes: string | undefined;
     if (gestante.ubs_id) {
       const ubsAtual = await this.prisma.ubs.findUnique({
         where: { id: gestante.ubs_id },
-        select: { nome: true },
+        select: { nome: true, cnes: true },
       });
-      const unidadeAtualNome = ubsAtual?.nome ?? undefined;
-      const opcoes = unidadeAtualNome
-        ? this.adicionarOpcaoCdiSeAusente(opcoesProximas, unidadeAtualNome)
-        : opcoesProximas;
-      return {
-        cenario: "manter_ou_alterar_unidade",
-        mensagem:
-          "Deseja permanecer na unidade atual ou selecionar uma das unidades mais proximas do seu endereco?",
-        unidadeAtualNome,
-        opcoes,
-      };
+      unidadeAtualNome = ubsAtual?.nome ?? undefined;
+      unidadeAtualCnes = ubsAtual?.cnes ?? undefined;
+      if (unidadeAtualNome) {
+        const jaPresente = opcoes.some(
+          (item) => item.nome.trim().toLowerCase() === unidadeAtualNome!.trim().toLowerCase(),
+        );
+        if (!jaPresente) {
+          opcoes.unshift({
+            nome: unidadeAtualNome,
+            ...(unidadeAtualCnes ? { cnes: unidadeAtualCnes } : {}),
+            origem: "acompanhamento_pre_natal",
+          });
+        }
+      }
     }
+
+    if (orientacao.unidadeCadastroNome) {
+      const cadastroExiste = opcoes.some(
+        (item) => item.nome.trim().toLowerCase() === orientacao.unidadeCadastroNome!.trim().toLowerCase(),
+      );
+      if (!cadastroExiste) {
+        opcoes.push({
+          nome: orientacao.unidadeCadastroNome,
+          ...(orientacao.unidadeCadastroCnes ? { cnes: orientacao.unidadeCadastroCnes } : {}),
+          origem: "cadastro_individual",
+        });
+      }
+    }
+
+    const cenario = gestante.ubs_id ? "manter_ou_alterar_unidade" : "escolher_unidade";
     return {
-      cenario: "escolher_unidade",
-      mensagem: "Selecione uma das unidades mais proximas do seu endereco para acompanhamento pre-natal.",
-      opcoes: opcoesProximas,
+      cenario,
+      situacaoFinal: orientacao.situacaoFinal,
+      mensagem: orientacao.mensagem,
+      exigeEscolha: orientacao.exigeEscolha || cenario === "escolher_unidade",
+      ...(unidadeAtualNome ? { unidadeAtualNome } : {}),
+      ...(unidadeAtualCnes ? { unidadeAtualCnes } : {}),
+      opcoes,
     };
   }
 
@@ -481,6 +504,7 @@ export class GestanteService {
     const payload = await this.escolherUnidade({
       cadastroId: input.cadastroId,
       nomeUnidade: input.nomeUnidade,
+      cnes: input.cnes,
       origem: input.origem,
     });
     return { sucesso: payload.sucesso, unidadeNome: payload.unidadeNome };
@@ -799,7 +823,11 @@ export class GestanteService {
     const gestante = rows[0];
     if (!gestante) throw new NotFoundException("gestante_not_found");
 
-    const unidade = await this.unidadeService.resolverPorNome(input.nomeUnidade);
+    const unidade = await this.unidadeService.resolverPorCnesOuNome({
+      cnes: input.cnes,
+      nome: input.nomeUnidade,
+    });
+    const origem = this.normalizarOrigemEscolhaUnidade(input.origem);
     await this.prisma.$transaction(async (tx: any) => {
       await tx.gestanteVinculo.upsert({
         where: { gestanteId: gestante.id },
@@ -824,70 +852,81 @@ export class GestanteService {
         gestante.id,
         unidade.id,
         input.nomeUnidade,
-        input.origem,
+        origem,
       );
     });
 
     return { sucesso: true, unidadeId: unidade.id, unidadeNome: unidade.nome };
   }
 
-  async confirmarOrientacao(input: ConfirmarOrientacaoInput) {
+  private normalizarOrigemEscolhaUnidade(origem: string): string {
+    const v = (origem ?? "").trim().toLowerCase();
+    if (
+      v === "cadastro_individual" ||
+      v === "distrito" ||
+      v === "ubs_municipio" ||
+      v === "acompanhamento_pre_natal"
+    ) {
+      return v;
+    }
+    if (v === "cdi") return "cadastro_individual";
+    if (v === "proxima") return "distrito";
+    if (v === "acompanhamento") return "acompanhamento_pre_natal";
+    return "distrito";
+  }
+
+  async confirmarOrientacao(input: ConfirmarOrientacaoInput): Promise<OrientacaoMaeSalvadorPayload> {
     if (!input.cns && !input.cadastroId) {
       throw new BadRequestException("cns_or_cadastro_id_required");
     }
 
-    if (input.latitude !== undefined && (input.latitude < -90 || input.latitude > 90)) {
-      throw new BadRequestException("invalid_latitude");
-    }
-    if (input.longitude !== undefined && (input.longitude < -180 || input.longitude > 180)) {
-      throw new BadRequestException("invalid_longitude");
-    }
-
     let cns = input.cns?.replace(/\D/g, "");
-    if (!cns && input.cadastroId) {
+    let fallbackEndereco: { bairro?: string | null; municipio?: string | null } | undefined;
+    if (input.cadastroId) {
       const rows = (await this.prisma.$queryRawUnsafe(
         `
-        SELECT g.id::text, u.cns::text, u.cpf::text
+        SELECT
+          g.id::text                  AS id,
+          u.cns::text                 AS cns,
+          u.cpf::text                 AS cpf,
+          e.bairro::text              AS bairro,
+          e.municipio::text           AS municipio
         FROM gestante g
         INNER JOIN usuario u ON u.id = g.usuario_id
+        INNER JOIN pessoa  p ON p.id = g.pessoa_id
+        LEFT JOIN endereco e ON e.pessoa_id = p.id
         WHERE g.id = $1::uuid
         LIMIT 1
         `,
         input.cadastroId,
-      )) as Array<{ id: string; cns: string | null; cpf: string | null }>;
+      )) as Array<{
+        id: string;
+        cns: string | null;
+        cpf: string | null;
+        bairro: string | null;
+        municipio: string | null;
+      }>;
       const gestante = rows[0];
       if (!gestante) throw new NotFoundException("gestante_not_found");
 
-      cns = gestante.cns ?? undefined;
-      if (!cns && gestante.cpf) {
-        const cnsResolve = await this.integracaoService.buscarCns(gestante.cpf);
-        if (cnsResolve.sucesso && cnsResolve.cidadao?.cns) cns = cnsResolve.cidadao.cns;
+      if (!cns) {
+        cns = gestante.cns ?? undefined;
+        if (!cns && gestante.cpf) {
+          const cnsResolve = await this.integracaoService.buscarCns(gestante.cpf);
+          if (cnsResolve.sucesso && cnsResolve.cidadao?.cns) cns = cnsResolve.cidadao.cns;
+        }
+      }
+      if (gestante.bairro || gestante.municipio) {
+        fallbackEndereco = {
+          bairro: gestante.bairro ?? null,
+          municipio: gestante.municipio ?? null,
+        };
       }
     }
 
     if (!cns) throw new BadRequestException("cns_not_resolved");
 
-    let lat = input.latitude;
-    let lon = input.longitude;
-    if ((lat === undefined || lon === undefined) && input.cadastroId) {
-      const endereco = await this.prisma.endereco.findFirst({
-        where: { pessoa: { gestante: { is: { id: input.cadastroId } } } },
-        select: { logradouro: true, numero: true, bairro: true, cep: true },
-      });
-      if (endereco) {
-        const query = [endereco.logradouro, endereco.numero, endereco.bairro, "Salvador", "BA", endereco.cep]
-          .filter(Boolean)
-          .join(", ");
-        const geocoded = await this.integracaoService.geocodificarEndereco(query);
-        if (geocoded) {
-          lat = geocoded.lat;
-          lon = geocoded.lon;
-        }
-      }
-    }
-
-    const mensagem = await this.integracaoService.confirmarOrientacao(cns, lat, lon);
-    return { mensagem };
+    return this.integracaoService.orientarMaeSalvador(cns, fallbackEndereco);
   }
 
   private formatDateBr(isoDate: string): string {
@@ -988,73 +1027,6 @@ export class GestanteService {
       "69", "71", "73", "74", "75", "77", "79", "81", "82", "83", "84", "85", "86", "87",
       "88", "89", "91", "92", "93", "94", "95", "96", "97", "98", "99",
     ]).has(ddd);
-  }
-
-  private parseOpcoesEscolhaDaMensagem(
-    mensagem: string,
-  ): Array<{ nome: string; distanciaKm: string; origem: "cdi" | "proxima" }> {
-    const texto = mensagem.trim();
-    const opcoes: Array<{ nome: string; distanciaKm: string; origem: "cdi" | "proxima" }> = [];
-    const markerRegex = /as\s+(?:5\s+)?unidades\s+mais\s+pr[oó]ximas\s+s[aã]o:\s*/i;
-    const markerMatch = markerRegex.exec(texto);
-    if (markerMatch) {
-      const listaRaw = texto.slice(markerMatch.index + markerMatch[0].length).trim();
-      const itemRegex = /\s*([^,]+?)(?:\s*\(([\d.,]+)\s*km\))?\s*(?:,|$)/gi;
-      let match: RegExpExecArray | null = itemRegex.exec(listaRaw);
-      while (match) {
-        const nome = (match[1] ?? "").trim();
-        const distanciaKm = (match[2] ?? "").trim();
-        if (nome) {
-          opcoes.push({
-            nome,
-            distanciaKm: distanciaKm || "",
-            origem: "proxima",
-          });
-        }
-        match = itemRegex.exec(listaRaw);
-      }
-    }
-
-    const cdiMatch = texto.match(
-      /Deseja realizar seu acompanhamento pr[ée]-natal na unidade\s+(.+?)\s+que est[áa]\s+vinculada/i,
-    );
-    if (cdiMatch?.[1]) {
-      const nome = cdiMatch[1].trim();
-      if (nome) {
-        opcoes.unshift({
-          nome,
-          distanciaKm: "",
-          origem: "cdi",
-        });
-      }
-    }
-
-    return opcoes;
-  }
-
-  private adicionarOpcaoCdiSeAusente(
-    opcoes: Array<{ nome: string; distanciaKm: string; origem: "cdi" | "proxima" }>,
-    unidadeAtualNome: string,
-  ): Array<{ nome: string; distanciaKm: string; origem: "cdi" | "proxima" }> {
-    const normalizedAtual = unidadeAtualNome.trim().toLowerCase();
-    const exists = opcoes.some((item) => item.nome.trim().toLowerCase() === normalizedAtual);
-    if (exists) return opcoes;
-    return [{ nome: unidadeAtualNome, distanciaKm: "", origem: "cdi" }, ...opcoes];
-  }
-
-  private async listarOpcoesUnidadeFallback(): Promise<
-    Array<{ nome: string; distanciaKm: string; origem: "proxima" }>
-  > {
-    const ubs = await this.prisma.ubs.findMany({
-      orderBy: { nome: "asc" },
-      take: 5,
-      select: { nome: true },
-    });
-    return ubs.map((item: { nome: string }) => ({
-      nome: item.nome,
-      distanciaKm: "",
-      origem: "proxima",
-    }));
   }
 
   private isLegacySchemaMismatchError(error: unknown): boolean {

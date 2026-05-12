@@ -43,8 +43,14 @@ export class AuthService {
       },
     });
 
-    if (!usuario?.senhaHash || usuario.status !== "ativo") {
-      throw new UnauthorizedException("invalid_credentials");
+    if (!usuario) {
+      throw new UnauthorizedException("user_not_found");
+    }
+    if (usuario.status !== "ativo") {
+      throw new UnauthorizedException("user_inactive");
+    }
+    if (!usuario.senhaHash) {
+      throw new UnauthorizedException("invalid_password");
     }
 
     const valido = await this.passwordService.verify(
@@ -52,13 +58,14 @@ export class AuthService {
       usuario.senhaHash,
     );
     if (!valido) {
-      throw new UnauthorizedException("invalid_credentials");
+      throw new UnauthorizedException("invalid_password");
+    }
+
+    if (!usuario.gestante?.id) {
+      throw new UnauthorizedException("gestante_not_found");
     }
 
     const token = await this.jwtService.sign(usuario.id, "gestante");
-    if (!usuario.gestante?.id) {
-      throw new UnauthorizedException("invalid_credentials");
-    }
     return {
       token,
       usuarioId: usuario.id,

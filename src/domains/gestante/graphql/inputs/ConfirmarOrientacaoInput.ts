@@ -1,5 +1,5 @@
-import { Field, Float, InputType } from "@nestjs/graphql";
-import { IsNumber, IsOptional, IsString } from "class-validator";
+import { Field, InputType } from "@nestjs/graphql";
+import { IsOptional, IsString } from "class-validator";
 
 @InputType()
 export class ConfirmarOrientacaoInput {
@@ -12,14 +12,4 @@ export class ConfirmarOrientacaoInput {
   @IsOptional()
   @IsString()
   cadastroId?: string;
-
-  @Field(() => Float, { nullable: true })
-  @IsOptional()
-  @IsNumber()
-  latitude?: number;
-
-  @Field(() => Float, { nullable: true })
-  @IsOptional()
-  @IsNumber()
-  longitude?: number;
 }
